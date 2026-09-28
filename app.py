@@ -1,3 +1,8 @@
+import os                                                    # ✅ CHANGED
+if not os.path.exists("models/rating_model.pkl"):            # ✅ CHANGED 🔴 models ഇല്ലെങ്കിൽ (server-ൽ ആദ്യ തവണ)...
+    os.makedirs("models", exist_ok=True)                     # ✅ CHANGED
+    import build_models                                      # ✅ CHANGED 🔴 ...build_models.py run ചെയ്ത് models ഉണ്ടാക്കുന്നു (1-2 മിനിറ്റ്, ഒരിക്കൽ മാത്രം)
+
 import uuid
 import streamlit as st
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -6,8 +11,8 @@ from langgraph.prebuilt import tools_condition
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from step4_langchain import llm_with_tools   # 🔴 Step 4-ലെ LLM + tools
-from step5_langgraph import tools_node       # 🔴 Step 5-ലെ നമ്മുടെ സ്വന്തം tools node
+from step4_langchain import llm_with_tools
+from step5_langgraph import tools_node
 
 # ================= STRICTER PROMPT (hallucination fix) =================
 SYSTEM_PROMPT = """You are CineSense, a friendly movie assistant.
@@ -16,11 +21,11 @@ Rules:
 - Only mention movies that appear in tool results in this conversation.
 - Use ratings, years and other numbers exactly as the tools return them. Never use IMDb ratings or your own memory.
 - If the data doesn't have what the user wants, say so honestly.
-- Keep answers short and friendly."""   # 🔴 ചേട്ടന്റെ കർശന നിയമം: tool results മാത്രം, സ്വന്തം ഓർമ്മ വേണ്ട
+- Keep answers short and friendly."""
 
 
 # ================= BUILD AGENT (once) =================
-@st.cache_resource   # 🔴 agent-ഉം memory-യും ഒരിക്കൽ മാത്രം ഉണ്ടാക്കുന്നു, ഓരോ click-ലും വീണ്ടും ഉണ്ടാക്കില്ല
+@st.cache_resource
 def build_agent():
     def agent_node(state: MessagesState):
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
@@ -32,7 +37,7 @@ def build_agent():
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
-    return graph.compile(checkpointer=InMemorySaver())   # 🔴 Step 5-ലെ graph + Step 6-ലെ memory
+    return graph.compile(checkpointer=InMemorySaver())
 
 
 agent = build_agent()
@@ -47,7 +52,7 @@ def ask_agent(question):
                 if node_name == "agent":
                     msg = data["messages"][-1]
                     if msg.tool_calls:
-                        tools_used += [f"{tc['name']}({tc['args']})" for tc in msg.tool_calls]   # 🔴 ഏതൊക്കെ tools ഉപയോഗിച്ചു എന്ന് ശേഖരിക്കുന്നു, UI-ൽ കാണിക്കാൻ
+                        tools_used += [f"{tc['name']}({tc['args']})" for tc in msg.tool_calls]
                     else:
                         answer = msg.content
     except GraphRecursionError:
@@ -59,7 +64,7 @@ def ask_agent(question):
 
 def show_tools(tools_used):
     if tools_used:
-        with st.expander(f"🔧 Tools used ({len(tools_used)})"):   # 🔴 agent ഉള്ളിൽ ചെയ്തത് കാണിക്കുന്ന ചെറിയ പെട്ടി: demo-യ്ക്ക് വളരെ ഉപകാരപ്രദം
+        with st.expander(f"🔧 Tools used ({len(tools_used)})"):
             for t in tools_used:
                 st.code(t, language=None)
 
@@ -69,12 +74,11 @@ st.set_page_config(page_title="CineSense Agent", page_icon="🎬")
 st.title("🎬 CineSense Agent")
 st.caption("An AI movie assistant that uses my own ML models (recommender + rating predictor) as tools · LangGraph + Groq")
 
-if "thread_id" not in st.session_state:                 # 🔴 ഓരോ browser tab-നും സ്വന്തം conversation (thread_id)
+if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
-if "history" not in st.session_state:                   # 🔴 screen-ൽ കാണിക്കാനുള്ള chat history
+if "history" not in st.session_state:
     st.session_state.history = []
 
-# ---------- Sidebar ----------
 with st.sidebar:
     st.header("Try asking")
     examples = [
@@ -88,20 +92,18 @@ with st.sidebar:
         if st.button(q, use_container_width=True):
             clicked = q
     st.divider()
-    if st.button("🗑️ New chat", use_container_width=True):   # 🔴 പുതിയ thread_id = പുതിയ conversation, memory ഇല്ല
+    if st.button("🗑️ New chat", use_container_width=True):
         st.session_state.thread_id = str(uuid.uuid4())
         st.session_state.history = []
         st.rerun()
     st.caption("Data: TMDB 5000 (movies up to 2017)")
 
-# ---------- Old messages ----------
 for item in st.session_state.history:
     with st.chat_message(item["role"]):
         st.markdown(item["content"])
         show_tools(item.get("tools"))
 
-# ---------- New message ----------
-prompt = st.chat_input("Ask me about movies...") or clicked   # 🔴 type ചെയ്തതോ sidebar-ൽ click ചെയ്തതോ ആയ ചോദ്യം
+prompt = st.chat_input("Ask me about movies...") or clicked
 
 if prompt:
     st.session_state.history.append({"role": "user", "content": prompt})
