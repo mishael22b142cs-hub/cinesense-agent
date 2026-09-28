@@ -1,10 +1,16 @@
-import os                                                    # ✅ CHANGED
-if not os.path.exists("models/rating_model.pkl"):            # ✅ CHANGED 🔴 models ഇല്ലെങ്കിൽ (server-ൽ ആദ്യ തവണ)...
-    os.makedirs("models", exist_ok=True)                     # ✅ CHANGED
-    import build_models                                      # ✅ CHANGED 🔴 ...build_models.py run ചെയ്ത് models ഉണ്ടാക്കുന്നു (1-2 മിനിറ്റ്, ഒരിക്കൽ മാത്രം)
+import os
+import streamlit as st                                        # ✅ CHANGED: മുകളിലേക്ക് നീക്കി
+
+try:                                                          # ✅ CHANGED
+    os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]   # ✅ CHANGED 🔴 server-ൽ: Streamlit Secrets-ൽ നിന്ന് key എടുത്ത് Groq-ന് കൊടുക്കുന്നു
+except Exception:                                             # ✅ CHANGED
+    pass                                                      # ✅ CHANGED 🔴 laptop-ൽ: secrets ഇല്ല, .env ഉപയോഗിക്കും
+
+if not os.path.exists("models/rating_model.pkl"):
+    os.makedirs("models", exist_ok=True)
+    import build_models
 
 import uuid
-import streamlit as st
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import tools_condition
