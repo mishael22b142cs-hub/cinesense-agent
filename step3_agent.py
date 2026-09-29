@@ -74,6 +74,13 @@ def top_movies_by_genre(genre, min_votes=500, n=5):
         return f"No '{genre}' movies found."
     return json.dumps([movie_card(i) for i in result.index])
 
+def movies_by_director(name, n=5):
+    d = name.lower()
+    result = catalog[catalog["director"].str.lower().str.contains(d, regex=False)]
+    result = result.sort_values("vote_average", ascending=False).head(int(n or 5))
+    if result.empty:
+        return f"No {name} movies found."
+    return json.dumps([movie_card(i) for i in result.index])        
 
 def predict_rating(budget_millions, runtime, genre, year=2026):
     X = pd.DataFrame([{                                                 # 🔴 training-ൽ ഉപയോഗിച്ച അതേ column names-ൽ ഒരു row ഉണ്ടാക്കുന്നു

@@ -56,8 +56,16 @@ def predict_rating(budget_millions: float, runtime: float, genre: str, year: int
     """
     return core.predict_rating(budget_millions, runtime, genre, year)
 
+@tool(parse_docstring=True)
+def movies_by_director(name: str) -> str:
+    """Get movies by a director, e.g. Christopher Nolan.
 
-TOOLS = [search_movie, recommend_similar, top_movies_by_genre, predict_rating]
+    Args:
+        name: Director name.
+    """
+    return core.movies_by_director(name)
+
+TOOLS = [search_movie, recommend_similar, top_movies_by_genre, predict_rating,movies_by_director]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}   # 🔴 Step 2-ലെ AVAILABLE_TOOLS തന്നെ, പക്ഷേ list-ൽ നിന്ന് തനിയെ ഉണ്ടാക്കുന്നു
 
 # ================= LLM + TOOLS =================
