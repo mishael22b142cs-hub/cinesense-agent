@@ -1,3 +1,13 @@
+> **Branch note:** the `vector-search-rag` branch adds real vector search (FAISS +
+> sentence-transformers), a PyTorch rating model, and an AWS deployment path. It is
+> **not merged into `main`** yet. The live Streamlit demo linked below still runs the
+> original `main` branch (CountVectorizer + Random Forest) and is untouched. Before
+> merging: deploy a second, throwaway Streamlit Community Cloud app pointed at this
+> branch to confirm cold-start time and memory fit Streamlit Cloud's free tier (torch +
+> sentence-transformers are much heavier than scikit-learn), then merge once it's
+> confirmed to work. See `build_embeddings.py`, `train_rating_model.py`, `api.py`,
+> `Dockerfile`, `DEPLOYMENT.md`, and `colab_build_models.ipynb` for what's new.
+
 I built an AI movie assistant where the LLM uses my own ML models as tools. 🎬
 
 Meet CineSense Agent. Ask it things like:

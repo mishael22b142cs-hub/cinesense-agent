@@ -6,9 +6,12 @@ try:                                                          # ✅ CHANGED
 except Exception:                                             # ✅ CHANGED
     pass                                                      # ✅ CHANGED 🔴 laptop-ൽ: secrets ഇല്ല, .env ഉപയോഗിക്കും
 
-if not os.path.exists("models/rating_model.pkl"):
+if not os.path.exists("models/movie_index.faiss"):
     os.makedirs("models", exist_ok=True)
-    import build_models
+    import build_embeddings
+if not os.path.exists("models/rating_model_torch.pt"):
+    os.makedirs("models", exist_ok=True)
+    import train_rating_model
 
 import uuid
 from langchain_core.messages import SystemMessage, HumanMessage

@@ -1,18 +1,32 @@
 import json
 import joblib
 import pandas as pd
+import numpy as np
+import faiss
+import torch
 from dotenv import load_dotenv
 from groq import Groq
-from sklearn.metrics.pairwise import cosine_similarity
+
+from train_rating_model import RatingMLP
 
 load_dotenv()
 client = Groq()
 MODEL = "openai/gpt-oss-120b"
+EMBED_MODEL = "all-MiniLM-L6-v2"
 
 # ================= LOAD MODELS (once, at startup) =================
-catalog = joblib.load("models/catalog.pkl")           # 🔴 save ചെയ്ത movie table load ചെയ്യുന്നു, app start ആകുമ്പോൾ ഒരിക്കൽ മാത്രം
-vectors = joblib.load("models/vectors.pkl")
-rating_model = joblib.load("models/rating_model.pkl")
+# Real vector search: sentence-transformer embeddings + FAISS, instead of the old
+# CountVectorizer + cosine_similarity (still in build_models.py for comparison).
+catalog = joblib.load("models/catalog.pkl")
+vector_index = faiss.read_index("models/movie_index.faiss")
+embeddings = np.load("models/embeddings.npy")
+
+# PyTorch MLP rating predictor (see train_rating_model.py), with its sklearn
+# preprocessing pipeline (scaler + genre one-hot) saved alongside it.
+rating_pipeline = joblib.load("models/rating_feature_pipeline.pkl")
+rating_model = RatingMLP(n_inputs=rating_pipeline["n_inputs"])
+rating_model.load_state_dict(torch.load("models/rating_model_torch.pt", map_location="cpu"))
+rating_model.eval()
 
 
 # ================= HELPERS =================
@@ -48,20 +62,22 @@ def search_movie(title):
     return json.dumps(card)
 
 
-def recommend_similar(title, n=5, min_rating=None):                                # ✅ CHANGED: min_rating ചേർത്തു
+def recommend_similar(title, n=5, min_rating=None):
     i = find_index(title)
     if i is None:
         return f"'{title}' not found in the TMDB 5000 dataset."
     n = int(n or 5)
-    scores = cosine_similarity(vectors[i], vectors).flatten()                      # 🔴 ഈ movie-ക്ക് മറ്റ് എല്ലാ movies-മായുള്ള similarity score കണക്കാക്കുന്നു
-    ranked = [j for j in scores.argsort()[::-1] if j != i]                         # 🔴 ഏറ്റവും സാമ്യമുള്ളത് ആദ്യം വരുന്ന ക്രമത്തിൽ sort ചെയ്യുന്നു, ആ movie-യെ തന്നെ ഒഴിവാക്കുന്നു
-    if min_rating is not None:                                                     # ✅ CHANGED
-        ranked = [j for j in ranked[:300]                                          # ✅ CHANGED 🔴 ഏറ്റവും സാമ്യമുള്ള 300 എണ്ണത്തിൽ നിന്ന് മാത്രം തിരയുന്നു
-                  if catalog.loc[j, "vote_average"] >= float(min_rating)           # ✅ CHANGED 🔴 rating filter
-                  and catalog.loc[j, "vote_count"] >= 100]                         # ✅ CHANGED 🔴 വളരെ കുറച്ച് votes മാത്രമുള്ള "fake high" ratings ഒഴിവാക്കുന്നു
-    best = ranked[:n]                                                              # ✅ CHANGED
-    if not best:                                                                   # ✅ CHANGED
-        return f"No movies similar to '{title}' found with rating >= {min_rating}."  # ✅ CHANGED
+    k = 300 if min_rating is not None else n + 1   # wider pool to filter, like the old version
+    query_vector = embeddings[i:i + 1]              # already L2-normalized
+    _, indices = vector_index.search(query_vector, min(k + 1, vector_index.ntotal))
+    ranked = [int(j) for j in indices[0] if j != i]
+    if min_rating is not None:
+        ranked = [j for j in ranked
+                  if catalog.loc[j, "vote_average"] >= float(min_rating)
+                  and catalog.loc[j, "vote_count"] >= 100]
+    best = ranked[:n]
+    if not best:
+        return f"No movies similar to '{title}' found with rating >= {min_rating}."
     return json.dumps([movie_card(j) for j in best])
 
 
@@ -74,31 +90,38 @@ def top_movies_by_genre(genre, min_votes=500, n=5):
         return f"No '{genre}' movies found."
     return json.dumps([movie_card(i) for i in result.index])
 
+
 def movies_by_director(name, n=5):
     d = name.lower()
     result = catalog[catalog["director"].str.lower().str.contains(d, regex=False)]
     result = result.sort_values("vote_average", ascending=False).head(int(n or 5))
     if result.empty:
         return f"No {name} movies found."
-    return json.dumps([movie_card(i) for i in result.index])        
+    return json.dumps([movie_card(i) for i in result.index])
+
 
 def predict_rating(budget_millions, runtime, genre, year=2026):
-    X = pd.DataFrame([{                                                 # 🔴 training-ൽ ഉപയോഗിച്ച അതേ column names-ൽ ഒരു row ഉണ്ടാക്കുന്നു
+    X = pd.DataFrame([{
         "budget_millions": float(budget_millions),
         "runtime": float(runtime),
         "year": float(year or 2026),
         "main_genre": genre.title(),
     }])
-    pred = rating_model.predict(X)[0]                                   # 🔴 Pipeline genre encode ചെയ്ത്, rating predict ചെയ്യുന്നു, ഒരൊറ്റ call-ൽ
+    X_enc = rating_pipeline["preprocess"].transform(X).astype("float32")
+    if hasattr(X_enc, "toarray"):
+        X_enc = X_enc.toarray()
+    with torch.no_grad():
+        pred = rating_model(torch.from_numpy(X_enc)).item()
     return json.dumps({"predicted_rating": round(float(pred), 1),
-                       "note": "Rough estimate from a Random Forest model trained on TMDB data."})
+                       "note": "Estimate from a small PyTorch MLP trained on TMDB data."})
 
 
-AVAILABLE_TOOLS = {                                                     # 🔴 LLM പറയുന്ന tool name-നെ യഥാർത്ഥ Python function-മായി ബന്ധിപ്പിക്കുന്നു
+AVAILABLE_TOOLS = {
     "search_movie": search_movie,
     "recommend_similar": recommend_similar,
     "top_movies_by_genre": top_movies_by_genre,
     "predict_rating": predict_rating,
+    "movies_by_director": movies_by_director,
 }
 
 # ================= SCHEMAS =================
@@ -119,13 +142,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "recommend_similar",
-            "description": "Recommend movies similar to a given movie, based on story, genres, keywords, cast and director. Can filter by minimum rating.",  # ✅ CHANGED
+            "description": "Recommend movies similar to a given movie, based on story, genres, keywords, cast and director. Can filter by minimum rating.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Movie the user liked"},
                     "n": {"type": ["integer", "null"], "description": "How many movies. Default 5."},
-                    "min_rating": {"type": ["number", "null"], "description": "Only return movies rated at or above this, e.g. 7.5. Optional."},  # ✅ CHANGED
+                    "min_rating": {"type": ["number", "null"], "description": "Only return movies rated at or above this, e.g. 7.5. Optional."},
                 },
                 "required": ["title"],
             },
@@ -161,6 +184,21 @@ TOOL_SCHEMAS = [
                     "year": {"type": ["integer", "null"], "description": "Release year. Default 2026."},
                 },
                 "required": ["budget_millions", "runtime", "genre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "movies_by_director",
+            "description": "Get movies by a director, e.g. Christopher Nolan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Director name"},
+                    "n": {"type": ["integer", "null"], "description": "How many movies. Default 5."},
+                },
+                "required": ["name"],
             },
         },
     },
@@ -218,8 +256,8 @@ def run_agent(question, max_steps=6):
 
 
 if __name__ == "__main__":
-    # run_agent("Tell me about Inception.")
-    # run_agent("Recommend 3 movies like The Dark Knight.")
-    # run_agent("What are the best science fiction movies?")
-    # run_agent("If I make a 2 hour thriller with a 50 million dollar budget, what rating might it get?")
+    run_agent("Tell me about Inception.")
+    run_agent("Recommend 3 movies like The Dark Knight.")
+    run_agent("What are the best science fiction movies?")
+    run_agent("If I make a 2 hour thriller with a 50 million dollar budget, what rating might it get?")
     run_agent("Suggest movies like Interstellar, but only ones rated above 7.5.")
