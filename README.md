@@ -1,12 +1,6 @@
-> **Branch note:** the `vector-search-rag` branch adds real vector search (FAISS +
-> sentence-transformers), a PyTorch rating model, and an AWS deployment path. It is
-> **not merged into `main`** yet. The live Streamlit demo linked below still runs the
-> original `main` branch (CountVectorizer + Random Forest) and is untouched. Before
-> merging: deploy a second, throwaway Streamlit Community Cloud app pointed at this
-> branch to confirm cold-start time and memory fit Streamlit Cloud's free tier (torch +
-> sentence-transformers are much heavier than scikit-learn), then merge once it's
-> confirmed to work. See `build_embeddings.py`, `train_rating_model.py`, `api.py`,
-> `Dockerfile`, `DEPLOYMENT.md`, and `colab_build_models.ipynb` for what's new.
+> **Branch note:** `vector-search-rag` is **not merged into `main`** yet. The live
+> Streamlit demo linked below still runs `main` (CountVectorizer + Random Forest) and
+> is untouched by this branch. See "What's new on this branch" below before merging.
 
 I built an AI movie assistant where the LLM uses my own ML models as tools. 🎬
 
@@ -31,3 +25,42 @@ Three things I learned while building it:
 I'm a 2026 Computer Science graduate looking for data science and ML roles. I'd love your feedback!
 
 #DataScience #MachineLearning #LangGraph #LangChain #GenAI #Python #OpenToWork
+
+---
+
+## What's new on this branch (`vector-search-rag`)
+
+**Real vector-search RAG, replacing keyword matching.** `build_embeddings.py` encodes
+each movie's overview/genres/keywords/cast/director as a sentence with
+`sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) and indexes it with **FAISS**
+(`IndexFlatIP` over L2-normalized vectors = exact cosine-similarity search). The
+`recommend_similar` tool in `step3_agent.py` now queries that index directly, instead
+of `CountVectorizer` bag-of-words + `sklearn.metrics.pairwise.cosine_similarity`
+(still in `build_models.py` for comparison) — bag-of-words only matches shared words,
+so it misses e.g. "heist" and "robbery" meaning the same thing; embeddings catch that.
+
+**PyTorch rating model vs. Random Forest baseline.** `train_rating_model.py` trains a
+small `nn.Module` MLP (64→32→1) on budget/runtime/year/genre and prints R²/MAE for
+both models on the same train/test split, as a direct comparison.
+
+**A second deployment surface.** `api.py` is a minimal FastAPI wrapper (`POST /ask`)
+around the same agent loop, independent of the Streamlit UI. `Dockerfile` +
+`.github/workflows/deploy.yml` build and push that image to Amazon ECR on every push
+to `main`; `DEPLOYMENT.md` has the exact AWS CLI commands to run it on AWS App Runner
+with auto-redeploy — real CI/CD, not a one-off deploy.
+
+**Can't build/train locally on this machine.** `torch`/`pandas` fail to import here
+with "An Application Control policy has blocked this file" (a Windows WDAC/AppLocker
+policy blocking specific compiled DLLs — not a code bug). `colab_build_models.ipynb`
+runs the same build/train code in Google Colab and produces a downloadable zip to
+extract into `models/`.
+
+**Before merging to `main`:** deploy a second, throwaway Streamlit Community Cloud app
+pointed at this branch first. torch + sentence-transformers are much heavier than
+scikit-learn alone, and the free tier's cold-start time/memory may not fit — confirm
+before replacing the production app's dependencies.
+
+New/changed files: `build_embeddings.py`, `train_rating_model.py`, `step3_agent.py`
+(rewritten `recommend_similar`/`predict_rating` internals), `app.py` (updated model
+bootstrap), `api.py`, `Dockerfile`, `.dockerignore`, `.github/workflows/deploy.yml`,
+`DEPLOYMENT.md`, `colab_build_models.ipynb`, `requirements.txt`.
